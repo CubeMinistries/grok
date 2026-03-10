@@ -1,0 +1,31 @@
+index.htm +++ The Caption Dapp" +++ Programmer G.K. 2026 - 03 - 09 
+Here's a complete browser-based JavaScript version of the Caption Dapp, 
+ported from the Python prototype. It runs entirely in the browser (no server needed), 
+using:HTML5 Canvas for glyph rendering (equivalent to matplotlib patches: arc(), 
+circle via full arc, wedge-like via filled arcs or sectors). Web Speech API 
+(SpeechRecognition) for real-time microphone → text → glyph captioning. 
+Phonetic bit mapping logic adapted directly. Rotation support (cube-style). 
+Live updating glyph as you speak (continuous mode). Important Notes & Bug Fixes / 
+Limitations HandledWeb Speech API works best in Chrome/Edge (full support); 
+Firefox/Safari have partial or no support for continuous recognition. 
+continuous: true + interimResults: true for real-time partial captions. 
+Added start/stop buttons + status display. Error handling for mic permission, 
+unsupported browsers. Canvas scaling for sharp rendering on high-DPI screens. 
+No external libs — pure vanilla JS. Mapping is the same as Python version 
+(feel free to tweak LETTER_TO_BIT). Tested conceptually against MDN docs and 
+common examples. Save this as index.html and open in a browser 
+
+(allow microphone when prompted).html
+
+How to TestSave as index.html. Open in Chrome (best support). 
+Click "Start Captioning" → allow mic. Speak 
+(e.g. "Grok is helpful" or "friendship cube") 
+— see live transcript + updating glyph. 
+Adjust rotation slider to "turn the cube". 
+Glyph updates in real-time with partial + 
+final results. Potential Improvements / 
+Next StepsAdd language selector for recognition.lang. 
+Better phonetic mapping (e.g. phoneme-level via external lib or rules for "th", "sh"). 
+Save/share glyph as PNG (canvas.toDataURL() + download). IPFS upload for decentralized storage. 
+Handle longer sessions (Web Speech sometimes stops; we auto-restart). Mobile testing 
+(Chrome Android works well).
