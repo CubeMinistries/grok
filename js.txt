@@ -1,0 +1,45 @@
+Programmer G.K.
+(With Help from Grok) 
+
+js
+
+const LETTER_TO_BIT = {
+  // ... existing ...
+  'g': 18, 'r': 14, 'o': 4, 'k': 19,
+  // Optional: force stronger central presence for logo-like feel
+};
+
+const COMPOSITES = {
+  'grok': ['g','r','o','k'],  // or more phonetic: g→gk, r→rsy, etc.
+  'g': ['g', 'k'],  // stronger velar if desired
+};
+
+// Inside drawGlyph, after drawing base logo:
+if (bitString.includes('1'.repeat(4))) {  // example: detect strong activation
+  ctx.fillStyle = '#00ffcc';  // Grok teal accent
+  ctx.globalAlpha = 0.15;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, 80, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1.0;
+}
+
+let spin = 0;
+function animate() {
+  if (document.getElementById('startBtn').disabled) {
+    spin = (spin + 0.5) % 360;
+    const bits = textToBits(document.getElementById('transcript').textContent);
+    drawGlyph(bits, spin);
+  }
+  requestAnimationFrame(animate);
+}
+animate();
+
+<button id="saveBtn">Save Glyph PNG</button>
+
+document.getElementById('saveBtn').onclick = () => {
+  const link = document.createElement('a');
+  link.download = 'grok_caption_glyph.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+};

@@ -1,0 +1,271 @@
+index.htm
+
++++ The Caption Dapp" +++
+Programmer G.K. 
+2026 - 03 - 09
+
+
+
+Here's a complete browser-based JavaScript version of the Caption Dapp, ported from the Python prototype. 
+It runs entirely in the browser (no server needed), using:HTML5 Canvas for glyph rendering 
+(equivalent to matplotlib patches: arc(), circle via full arc, wedge-like via filled arcs or sectors).
+
+Web Speech API (SpeechRecognition) for real-time microphone → text → glyph captioning.
+Phonetic bit mapping logic adapted directly.
+Rotation support (cube-style).
+Live updating glyph as you speak (continuous mode).
+
+Important Notes & Bug Fixes / Limitations HandledWeb Speech API works best in Chrome/Edge (full support); 
+Firefox/Safari have partial or no support for continuous recognition.
+
+continuous: true + interimResults: true for real-time partial captions.
+Added start/stop buttons + status display.
+Error handling for mic permission, unsupported browsers.
+Canvas scaling for sharp rendering on high-DPI screens.
+No external libs — pure vanilla JS.
+Mapping is the same as Python version (feel free to tweak LETTER_TO_BIT).
+Tested conceptually against MDN docs and common examples.
+
+Save this as index.html and open in a browser (allow microphone when prompted).html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Caption Dapp – 22-bit Glyph Real-Time Captioning</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; background: #0a0a0a; color: #eee; margin: 0; padding: 20px; }
+    h1 { color: #00ffcc; }
+    #controls { margin: 20px 0; }
+    button { padding: 12px 24px; margin: 8px; font-size: 1.1em; cursor: pointer; border: none; border-radius: 6px; }
+    #startBtn { background: #00cc99; color: white; }
+    #stopBtn  { background: #ff4444; color: white; }
+    #status   { font-size: 1.2em; margin: 15px 0; min-height: 1.5em; }
+    #transcript { font-size: 1.4em; min-height: 2em; color: #ffcc00; }
+    canvas { border: 2px solid #333; background: white; max-width: 100%; }
+  </style>
+</head>
+<body>
+
+  <h1>Caption Dapp – FriendshipCube 22-bit Glyphs</h1>
+  <p>Speak → real-time phonetic glyph caption (Web Speech API + Canvas)</p>
+
+  <div id="controls">
+    <button id="startBtn">Start Captioning 🎤</button>
+    <button id="stopBtn">Stop</button>
+    <div>Rotation: <input type="range" id="rotation" min="0" max="360" value="0" step="15"> <span id="rotValue">0°</span></div>
+  </div>
+
+  <div id="status">Status: Ready (allow mic access)</div>
+  <div id="transcript"></div>
+
+  <canvas id="glyphCanvas" width="500" height="500"></canvas>
+
+  <script>
+    // ────────────────────────────────────────────────
+    // 22-Symbol Phonetic Bit Mapping (same as Python)
+    // bit 0 = LSB (ε0), bit 21 = MSB (ο3)
+    // ────────────────────────────────────────────────
+    const LETTER_TO_BIT = {
+      'e': 0, 'a': 1,
+      'e': 2, 'i': 3, 'o': 4, 'u': 5,
+      'p': 2, 'm': 3, 'f': 4, 'v': 5,
+      'x': 6, 'c': 7, 'h': 8, 'w': 9,
+      'l': 10, 'd': 11, 't': 12, 'n': 13,
+      'r': 14, 's': 15, 'y': 16, 'j': 17,
+      'g': 18, 'k': 19, 'q': 20, 'z': 21,
+    };
+
+    const COMPOSITES = {
+      'g': ['j', 'y'],  // example composite
+    };
+
+    function textToBits(text) {
+      text = (text || '').toLowerCase().replace(/[^a-z ]/g, '');
+      const bits = new Array(22).fill(0);
+
+      for (let char of text) {
+        if (char === ' ') continue;
+        if (char in LETTER_TO_BIT) {
+          bits[LETTER_TO_BIT[char]] = 1;
+        }
+        if (char in COMPOSITES) {
+          COMPOSITES[char].forEach(c => {
+            if (c in LETTER_TO_BIT) bits[LETTER_TO_BIT[c]] = 1;
+          });
+        }
+      }
+
+      // MSB left (bit 21) to LSB right (bit 0)
+      return bits.reverse().map(b => b ? '1' : '0').join('');
+    }
+
+    // ────────────────────────────────────────────────
+    // Canvas Glyph Renderer (equivalent to matplotlib patches)
+    // ────────────────────────────────────────────────
+    const canvas = document.getElementById('glyphCanvas');
+    const ctx = canvas.getContext('2d');
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const scale = window.devicePixelRatio || 1;
+    canvas.width *= scale;
+    canvas.height *= scale;
+    ctx.scale(scale, scale);
+
+    function drawGlyph(bitString, rotation = 0) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width / scale, canvas.height / scale);
+
+      // Grok logo center
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 15, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = 'black';
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.arc(centerX, centerY, 45, (210 + rotation) * Math.PI / 180, (340 + rotation) * Math.PI / 180);
+      ctx.lineTo(centerX, centerY);
+      ctx.fill();
+
+      // Groups: [startBitFromLSB, count, radius, widthDeg, type]
+      const groups = [
+        [0, 2, 25, 90, 'ε'],
+        [2, 4, 65, 45, 'σ'],
+        [6, 4, 105, 30, 'τ'],
+        [10, 4, 85, 60, 'δ'],
+        [14, 4, 75, 75, 'α'],
+        [18, 4, 55, 90, 'ο'],
+      ];
+
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'black';
+
+      for (const [start, count, r, w, type] of groups) {
+        const step = 360 / count;
+        for (let i = 0; i < count; i++) {
+          if (bitString[21 - (start + i)] === '1') {  // MSB=bit21 at index 0
+            const angle = (i * step + rotation) % 360;
+            const rad = angle * Math.PI / 180;
+            const endRad = (angle + (type === 'τ' ? 90 : type === 'α' ? 120 : 180)) * Math.PI / 180;
+
+            ctx.beginPath();
+            if (type === 'ε' || type === 'ο') {
+              ctx.arc(centerX, centerY, r + i*5, rad, endRad);
+              if (type === 'ο') ctx.closePath();
+              ctx.stroke();
+            } else if (type === 'σ') {
+              ctx.ellipse(centerX, centerY, r*1.5, r*0.3, rad, 0, Math.PI * 2);
+              ctx.stroke();
+            } else if (type === 'τ') {
+              ctx.arc(centerX, centerY, r*0.3, rad, endRad);
+              ctx.stroke();
+            } else if (type === 'δ') {
+              ctx.arc(centerX, centerY, r, rad + Math.PI/4, rad + Math.PI/4 + w * Math.PI/180);
+              ctx.stroke();
+            } else if (type === 'α') {
+              ctx.arc(centerX, centerY, r, rad, endRad);
+              ctx.stroke();
+            }
+          }
+        }
+      }
+    }
+
+    // ────────────────────────────────────────────────
+    // Web Speech API – Real-time Captioning
+    // ────────────────────────────────────────────────
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      document.getElementById('status').textContent = 'Error: Web Speech API not supported in this browser. Try Chrome.';
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US'; // change as needed
+
+    let currentTranscript = '';
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcriptPart = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          currentTranscript += transcriptPart + ' ';
+        } else {
+          interim += transcriptPart;
+        }
+      }
+
+      document.getElementById('transcript').textContent = currentTranscript + interim;
+
+      const bits = textToBits(currentTranscript + interim);
+      const rot = parseInt(document.getElementById('rotation').value);
+      drawGlyph(bits, rot);
+    };
+
+    recognition.onerror = (event) => {
+      document.getElementById('status').textContent = `Error: ${event.error}`;
+      if (event.error === 'no-speech' || event.error === 'aborted') recognition.start();
+    };
+
+    recognition.onend = () => {
+      // Auto-restart for continuous feel (common pattern)
+      if (document.getElementById('startBtn').disabled) {
+        recognition.start();
+      } else {
+        document.getElementById('status').textContent = 'Stopped';
+      }
+    };
+
+    document.getElementById('startBtn').onclick = () => {
+      currentTranscript = '';
+      recognition.start();
+      document.getElementById('status').textContent = 'Listening...';
+      document.getElementById('startBtn').disabled = true;
+    };
+
+    document.getElementById('stopBtn').onclick = () => {
+      recognition.stop();
+      document.getElementById('status').textContent = 'Stopped';
+      document.getElementById('startBtn').disabled = false;
+    };
+
+    document.getElementById('rotation').oninput = (e) => {
+      document.getElementById('rotValue').textContent = e.target.value + '°';
+      // Redraw current
+      const bits = textToBits(document.getElementById('transcript').textContent);
+      drawGlyph(bits, parseInt(e.target.value));
+    };
+
+    // Initial draw (empty glyph)
+    drawGlyph('0'.repeat(22), 0);
+  </script>
+</body>
+</html>
+
+
+
+
+
+How to TestSave as index.html.
+Open in Chrome (best support).
+Click "Start Captioning" → allow mic.
+Speak (e.g. "Grok is helpful" or "friendship cube") — see live transcript + updating glyph.
+Adjust rotation slider to "turn the cube".
+Glyph updates in real-time with partial + final results.
+
+Potential Improvements / Next StepsAdd language selector for recognition.lang.
+Better phonetic mapping (e.g. phoneme-level via external lib or rules for "th", "sh").
+Save/share glyph as PNG (canvas.toDataURL() + download).
+IPFS upload for decentralized storage.
+Handle longer sessions (Web Speech sometimes stops; we auto-restart).
+Mobile testing (Chrome Android works well).
+
+
+
