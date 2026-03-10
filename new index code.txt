@@ -1,0 +1,268 @@
+Programmer G.K.
+Index
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Caption Dapp – 22-bit Glyph Real-Time Captioning with IPFS & ROS</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; background: #0a0a0a; color: #eee; margin: 0; padding: 20px; }
+    h1 { color: #00ffcc; }
+    #controls { margin: 20px 0; }
+    button { padding: 12px 24px; margin: 8px; font-size: 1.1em; cursor: pointer; border: none; border-radius: 6px; }
+    #startBtn { background: #00cc99; color: white; }
+    #stopBtn  { background: #ff4444; color: white; }
+    #ipfsBtn { background: #0077ff; color: white; }
+    #rosBtn { background: #ff9900; color: white; }
+    #status   { font-size: 1.2em; margin: 15px 0; min-height: 1.5em; }
+    #transcript { font-size: 1.4em; min-height: 2em; color: #ffcc00; }
+    #ipfsLink { margin: 10px; color: #00ffcc; }
+    canvas { border: 2px solid #333; background: white; max-width: 100%; }
+    /* Web font for cube characters - assuming a Unicode font; replace URL with custom if available */
+    @font-face {
+      font-family: 'CubeFont';
+      src: url('https://fonts.googleapis.com/css2?family=Noto+Sans&display=swap'); /* Example Unicode-supporting font */
+    }
+  </style>
+  <!-- IPFS HTTP Client for browser uploads -->
+  <script src="https://unpkg.com/ipfs-http-client@60.0.0/dist/ipfs-http-client.min.js"></script>
+  <!-- ROSLibJS for ROS integration -->
+  <script src="https://static.robotwebtools.org/roslibjs/current/roslib.min.js"></script>
+</head>
+<body>
+
+  <h1>Caption Dapp – FriendshipCube 22-bit Glyphs with IPFS & ROS</h1>
+  <p>Speak → real-time phonetic glyph caption (Web Speech API + Canvas). Upload to IPFS or send to ROS edge/cloud.</p>
+
+  <div id="controls">
+    <button id="startBtn">Start Captioning 🎤</button>
+    <button id="stopBtn">Stop</button>
+    <button id="ipfsBtn">Upload to IPFS 📤</button>
+    <button id="rosBtn">Send to ROS 🤖</button>
+    <div>Rotation: <input type="range" id="rotation" min="0" max="360" value="0" step="15"> <span id="rotValue">0°</span></div>
+  </div>
+
+  <div id="status">Status: Ready (allow mic access)</div>
+  <div id="transcript"></div>
+  <div id="ipfsLink"></div>
+
+  <canvas id="glyphCanvas" width="500" height="500"></canvas>
+
+  <script>
+    // IPFS Client - using public gateway (replace with your API key/gateway for production)
+    const ipfs = window.IpfsHttpClient.create({ url: 'https://ipfs.infura.io:5001/api/v0' }); // May require auth; use Pinata/Web3.storage for reliability
+
+    // ROS Connection - connect to rosbridge websocket (update URL to your ROS edge/core cloud setup, e.g., ws://robot-ip:9090)
+    const ros = new ROSLIB.Ros({ url: 'ws://localhost:9090' }); // Change to your ROS bridge URL
+    ros.on('connection', () => { document.getElementById('status').textContent += ' - ROS Connected'; });
+    ros.on('error', (err) => { console.log('ROS Error:', err); document.getElementById('status').textContent += ' - ROS Error'; });
+    ros.on('close', () => { document.getElementById('status').textContent += ' - ROS Closed'; });
+
+    // ROS Topic for publishing glyph data (e.g., std_msgs/String for bitString)
+    const glyphTopic = new ROSLIB.Topic({
+      ros: ros,
+      name: '/glyph_caption', // Custom topic; subscribe on robot side
+      messageType: 'std_msgs/String'
+    });
+
+    // Cube Characters for Glyph Rendering
+    const CUBE_CHARS = ['A', 'E', 'I', 'X', 'C', 'R']; // Base symbols; rotate/position for 22 variations
+
+    // 22-Symbol Phonetic Bit Mapping (same as before)
+    const LETTER_TO_BIT = {
+      'e': 0, 'a': 1,
+      'e': 2, 'i': 3, 'o': 4, 'u': 5,
+      'p': 2, 'm': 3, 'f': 4, 'v': 5,
+      'x': 6, 'c': 7, 'h': 8, 'w': 9,
+      'l': 10, 'd': 11, 't': 12, 'n': 13,
+      'r': 14, 's': 15, 'y': 16, 'j': 17,
+      'g': 18, 'k': 19, 'q': 20, 'z': 21,
+    };
+
+    const COMPOSITES = {
+      'g': ['j', 'y'],
+    };
+
+    function textToBits(text) {
+      text = (text || '').toLowerCase().replace(/[^a-z ]/g, '');
+      const bits = new Array(22).fill(0);
+
+      for (let char of text) {
+        if (char === ' ') continue;
+        if (char in LETTER_TO_BIT) {
+          bits[LETTER_TO_BIT[char]] = 1;
+        }
+        if (char in COMPOSITES) {
+          COMPOSITES[char].forEach(c => {
+            if (c in LETTER_TO_BIT) bits[LETTER_TO_BIT[c]] = 1;
+          });
+        }
+      }
+      return bits.reverse().map(b => b ? '1' : '0').join('');
+    }
+
+    // Optimized Canvas Glyph Renderer - Use Unicode chars with rotations; memoize last draw
+    const canvas = document.getElementById('glyphCanvas');
+    const ctx = canvas.getContext('2d');
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const scale = window.devicePixelRatio || 1;
+    canvas.width *= scale;
+    canvas.height *= scale;
+    ctx.scale(scale, scale);
+    ctx.font = 'bold 40px CubeFont'; // Use web font for Unicode support
+
+    let lastBits = '';
+    let lastRotation = 0;
+
+    function drawGlyph(bitString, rotation = 0) {
+      if (bitString === lastBits && rotation === lastRotation) return; // Optimize: skip if unchanged
+      lastBits = bitString;
+      lastRotation = rotation;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width / scale, canvas.height / scale);
+
+      // Grok logo center (simplified arcs)
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 15, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = 'black';
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.arc(centerX, centerY, 45, (210 + rotation) * Math.PI / 180, (340 + rotation) * Math.PI / 180);
+      ctx.lineTo(centerX, centerY);
+      ctx.fill();
+
+      // Groups for positioning chars
+      const groups = [
+        [0, 2, 25, 90, 'ε'], // Inner
+        [2, 4, 65, 45, 'σ'], // Horizontal
+        [6, 4, 105, 30, 'τ'], // Vertical
+        [10, 4, 85, 60, 'δ'], // Diagonal
+        [14, 4, 75, 75, 'α'], // Curved
+        [18, 4, 55, 90, 'ο'], // Closed
+      ];
+
+      ctx.fillStyle = 'black';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      for (const [start, count, r, w, type] of groups) {
+        const step = 360 / count;
+        for (let i = 0; i < count; i++) {
+          if (bitString[21 - (start + i)] === '1') {
+            const angle = (i * step + rotation) % 360;
+            const rad = angle * Math.PI / 180;
+            const char = CUBE_CHARS[(start + i) % 6]; // Cycle through A E I X C R
+
+            // Save/restore for rotation
+            ctx.save();
+            ctx.translate(centerX + r * Math.cos(rad), centerY + r * Math.sin(rad));
+            ctx.rotate(rad + (type === 'σ' ? 0 : type === 'τ' ? Math.PI/2 : Math.PI/4)); // Group-specific rotation
+            ctx.fillText(char, 0, 0);
+            ctx.restore();
+          }
+        }
+      }
+    }
+
+    // Web Speech API (unchanged)
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      document.getElementById('status').textContent = 'Error: Web Speech API not supported. Try Chrome.';
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    let currentTranscript = '';
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcriptPart = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          currentTranscript += transcriptPart + ' ';
+        } else {
+          interim += transcriptPart;
+        }
+      }
+
+      document.getElementById('transcript').textContent = currentTranscript + interim;
+
+      const bits = textToBits(currentTranscript + interim);
+      const rot = parseInt(document.getElementById('rotation').value);
+      drawGlyph(bits, rot);
+    };
+
+    recognition.onerror = (event) => {
+      document.getElementById('status').textContent = `Error: ${event.error}`;
+      if (event.error === 'no-speech' || event.error === 'aborted') recognition.start();
+    };
+
+    recognition.onend = () => {
+      if (document.getElementById('startBtn').disabled) {
+        recognition.start();
+      } else {
+        document.getElementById('status').textContent = 'Stopped';
+      }
+    };
+
+    document.getElementById('startBtn').onclick = () => {
+      currentTranscript = '';
+      recognition.start();
+      document.getElementById('status').textContent = 'Listening...';
+      document.getElementById('startBtn').disabled = true;
+    };
+
+    document.getElementById('stopBtn').onclick = () => {
+      recognition.stop();
+      document.getElementById('status').textContent = 'Stopped';
+      document.getElementById('startBtn').disabled = false;
+    };
+
+    document.getElementById('rotation').oninput = (e) => {
+      document.getElementById('rotValue').textContent = e.target.value + '°';
+      const bits = textToBits(document.getElementById('transcript').textContent);
+      drawGlyph(bits, parseInt(e.target.value));
+    };
+
+    // IPFS Upload Button
+    document.getElementById('ipfsBtn').onclick = async () => {
+      document.getElementById('status').textContent = 'Uploading to IPFS...';
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        const blob = await (await fetch(dataUrl)).blob();
+        const result = await ipfs.add(blob);
+        const cid = result.path;
+        const link = `https://ipfs.io/ipfs/${cid}`;
+        document.getElementById('ipfsLink').innerHTML = `IPFS CID: <a href="${link}" target="_blank">${cid}</a>`;
+        document.getElementById('status').textContent = 'Uploaded to IPFS!';
+      } catch (err) {
+        console.error('IPFS Error:', err);
+        document.getElementById('status').textContent = 'IPFS Upload Failed';
+      }
+    };
+
+    // ROS Send Button - Publish current bitString to ROS topic
+    document.getElementById('rosBtn').onclick = () => {
+      const bits = textToBits(document.getElementById('transcript').textContent);
+      const msg = new ROSLIB.Message({ data: bits });
+      glyphTopic.publish(msg);
+      document.getElementById('status').textContent = 'Sent to ROS!';
+    };
+
+    // Initial draw
+    drawGlyph('0'.repeat(22), 0);
+  </script>
+</body>
+</html>
